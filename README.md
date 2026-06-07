@@ -39,6 +39,7 @@ Set at least:
 OPENAI_API_KEY=sk-your-server-side-openai-key
 APP_SESSION_SECRET=replace-with-a-long-random-string
 REQUIRE_ACTIVE_SUBSCRIPTION=false
+MONTHLY_AI_REQUEST_LIMIT=120
 ```
 
 Install and run:
@@ -70,6 +71,14 @@ The current implementation supports two subscription checks:
 2. Stripe Checkout session creation through `/api/billing/checkout`.
 
 For full production billing, add a Stripe webhook that listens for subscription events and persists active customers in a database. The current allow-list is suitable for v2 pilot usage and manual monthly subscribers.
+
+## Keeping AI Costs Inside the Monthly Fee
+
+Users still do not provide an API key. The service owner keeps one server-side `OPENAI_API_KEY`, and monthly subscription revenue covers the provider invoice.
+
+Use `MONTHLY_AI_REQUEST_LIMIT` to cap each subscriber's monthly AI calls. This protects the operator from unlimited model usage. For example, if a plan costs $19/month, set a monthly request limit that leaves margin after expected OpenAI, hosting, payment, and support costs.
+
+The pilot implementation stores usage in memory. Before production, move usage records to a database so counters survive server restarts.
 
 ## Deployment
 

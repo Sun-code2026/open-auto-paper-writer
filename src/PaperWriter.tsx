@@ -65,6 +65,9 @@ export function PaperWriter() {
     setMessage('');
     try {
       await task();
+      if (getSessionToken()) {
+        getAccount().then(setAccount).catch(() => undefined);
+      }
       setStatus((current) => ({ ...current, [key]: 'done' }));
     } catch (error) {
       setStatus((current) => ({ ...current, [key]: 'error' }));
@@ -169,6 +172,10 @@ export function PaperWriter() {
               <span className={subscribed ? 'goodText' : 'warningText'}>
                 {subscribed ? `활성 구독 · ${account.subscription.plan}` : '구독 필요'}
               </span>
+              <span className="usageText">
+                {account.usage.period} 사용량: {account.usage.usedAiRequests}/{account.usage.monthlyAiRequestLimit} 요청
+              </span>
+              <span className="usageText">남은 생성 요청: {account.usage.remainingAiRequests}회</span>
               <button type="button" className="secondaryButton" onClick={handleLogout}>
                 <LogOut size={16} />
                 로그아웃

@@ -155,7 +155,8 @@ textarea {
 }
 
 .goodText,
-.warningText {
+.warningText,
+.usageText {
   font-weight: 800;
 }
 
@@ -165,6 +166,11 @@ textarea {
 
 .warningText {
   color: #8a5500;
+}
+
+.usageText {
+  color: #52616b;
+  font-size: 0.92rem;
 }
 
 .primaryButton,

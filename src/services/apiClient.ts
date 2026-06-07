@@ -4,6 +4,12 @@ export type AccountState = {
     active: boolean;
     plan: string;
   };
+  usage: {
+    period: string;
+    usedAiRequests: number;
+    monthlyAiRequestLimit: number;
+    remainingAiRequests: number;
+  };
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -60,7 +66,7 @@ export async function createCheckout() {
 }
 
 export async function aiRespond(system: string, prompt: string) {
-  const data = await request<{ text: string }>('/api/ai/respond', {
+  const data = await request<{ text: string; usage: AccountState['usage'] }>('/api/ai/respond', {
     method: 'POST',
     body: JSON.stringify({ system, prompt }),
   });

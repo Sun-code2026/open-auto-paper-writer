@@ -10,6 +10,7 @@ const port = Number(process.env.PORT ?? 8787);
 const origin = process.env.APP_ORIGIN ?? 'http://127.0.0.1:5173';
 const sessionSecret = process.env.APP_SESSION_SECRET ?? 'development-secret-change-me';
 const requireActiveSubscription = process.env.REQUIRE_ACTIVE_SUBSCRIPTION === 'true';
+const monthlyAiRequestLimit = Number(process.env.MONTHLY_AI_REQUEST_LIMIT ?? 120);
 const allowedSubscribers = new Set(
   (process.env.ALLOWED_SUBSCRIBERS ?? '')
     .split(',')
@@ -17,8 +18,35 @@ const allowedSubscribers = new Set(
     .filter(Boolean),
 );
 
+// Pilot storage. Replace with a database before production.
+const usageByMonth = new Map();
+
 app.use(cors({ origin, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
+
+function currentMonthKey() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function usageKey(email) {
+  return `${currentMonthKey()}:${String(email).toLowerCase()}`;
+}
+
+function usageFor(email) {
+  const usedAiRequests = usageByMonth.get(usageKey(email)) ?? 0;
+  return {
+    period: currentMonthKey(),
+    usedAiRequests,
+    monthlyAiRequestLimit,
+    remainingAiRequests: Math.max(monthlyAiRequestLimit - usedAiRequests, 0),
+  };
+}
+
+function incrementUsage(email) {
+  const key = usageKey(email);
+  usageByMonth.set(key, (usageByMonth.get(key) ?? 0) + 1);
+  return usageFor(email);
+}
 
 function signPayload(payload) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -49,6 +77,14 @@ function subscriptionFor(email) {
   };
 }
 
+function accountFor(email) {
+  return {
+    user: { email },
+    subscription: subscriptionFor(email),
+    usage: usageFor(email),
+  };
+}
+
 function requireSession(req, res, next) {
   const session = getSession(req);
   if (!session?.email) {
@@ -69,8 +105,26 @@ function requireSubscription(req, res, next) {
   next();
 }
 
+function requireUsageQuota(req, res, next) {
+  const usage = usageFor(req.session.email);
+  if (usage.remainingAiRequests <= 0) {
+    res.status(429).json({
+      error: '이번 달 AI 생성 한도를 모두 사용했습니다. 다음 달에 다시 사용하거나 상위 요금제로 변경하세요.',
+      usage,
+    });
+    return;
+  }
+  req.usage = usage;
+  next();
+}
+
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, version: 'v2', subscriptionMode: requireActiveSubscription ? 'required' : 'trial' });
+  res.json({
+    ok: true,
+    version: 'v2',
+    subscriptionMode: requireActiveSubscription ? 'required' : 'trial',
+    monthlyAiRequestLimit,
+  });
 });
 
 app.post('/api/auth/start', (req, res) => {
@@ -80,11 +134,11 @@ app.post('/api/auth/start', (req, res) => {
     return;
   }
   const token = signPayload({ email, exp: Date.now() + 1000 * 60 * 60 * 24 * 30 });
-  res.json({ token, user: { email }, subscription: subscriptionFor(email) });
+  res.json({ token, ...accountFor(email) });
 });
 
 app.get('/api/me', requireSession, (req, res) => {
-  res.json({ user: { email: req.session.email }, subscription: subscriptionFor(req.session.email) });
+  res.json(accountFor(req.session.email));
 });
 
 app.post('/api/billing/checkout', requireSession, async (req, res) => {
@@ -120,7 +174,7 @@ app.post('/api/billing/checkout', requireSession, async (req, res) => {
   res.json({ url: data.url });
 });
 
-app.post('/api/ai/respond', requireSession, requireSubscription, async (req, res) => {
+app.post('/api/ai/respond', requireSession, requireSubscription, requireUsageQuota, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     res.status(500).json({ error: '서버에 OPENAI_API_KEY가 설정되어 있지 않습니다.' });
     return;
@@ -153,6 +207,7 @@ app.post('/api/ai/respond', requireSession, requireSubscription, async (req, res
     return;
   }
 
+  const usage = incrementUsage(req.session.email);
   const text =
     typeof data.output_text === 'string'
       ? data.output_text
@@ -162,7 +217,7 @@ app.post('/api/ai/respond', requireSession, requireSubscription, async (req, res
           .map((content) => content.text)
           .join('\n');
 
-  res.json({ text });
+  res.json({ text, usage });
 });
 
 app.listen(port, () => {
