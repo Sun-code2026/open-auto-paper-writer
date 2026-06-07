@@ -1,16 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BookOpen,
   CheckCircle2,
   Clipboard,
+  CreditCard,
   Download,
   ExternalLink,
   FileText,
-  KeyRound,
   Loader2,
+  LogOut,
   Search,
   ShieldCheck,
   Sparkles,
+  UserRound,
 } from 'lucide-react';
 import type { CitationEnhancement, PaperOutline, ReviewResult, SectionDraft } from './types';
 import {
@@ -20,13 +22,20 @@ import {
   generateOutline,
   reviewManuscript,
 } from './services/paperService';
-
-const API_KEY_STORAGE = 'mscsl.openaiApiKey';
+import {
+  type AccountState,
+  clearSessionToken,
+  createCheckout,
+  getAccount,
+  getSessionToken,
+  startSession,
+} from './services/apiClient';
 
 type StepState = 'idle' | 'running' | 'done' | 'error';
 
 export function PaperWriter() {
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? '');
+  const [email, setEmail] = useState('');
+  const [account, setAccount] = useState<AccountState | null>(null);
   const [researchContent, setResearchContent] = useState('');
   const [keywords, setKeywords] = useState('');
   const [outline, setOutline] = useState<PaperOutline | null>(null);
@@ -36,19 +45,20 @@ export function PaperWriter() {
   const [status, setStatus] = useState<Record<string, StepState>>({});
   const [message, setMessage] = useState('');
 
+  useEffect(() => {
+    if (!getSessionToken()) return;
+    getAccount()
+      .then(setAccount)
+      .catch(() => clearSessionToken());
+  }, []);
+
   const finalManuscript = useMemo(() => {
     if (!outline || enhancements.length === 0) return '';
     return buildFinalManuscript(outline, enhancements);
   }, [outline, enhancements]);
 
-  const validKey = apiKey.startsWith('sk-');
-  const canStart = validKey && researchContent.trim().length > 40 && keywords.trim().length > 2;
-
-  const saveApiKey = (value: string) => {
-    setApiKey(value);
-    if (value) localStorage.setItem(API_KEY_STORAGE, value);
-    else localStorage.removeItem(API_KEY_STORAGE);
-  };
+  const subscribed = Boolean(account?.subscription.active);
+  const canStart = subscribed && researchContent.trim().length > 40 && keywords.trim().length > 2;
 
   const runStep = async (key: string, task: () => Promise<void>) => {
     setStatus((current) => ({ ...current, [key]: 'running' }));
@@ -62,9 +72,28 @@ export function PaperWriter() {
     }
   };
 
+  const handleLogin = () =>
+    runStep('login', async () => {
+      const nextAccount = await startSession(email);
+      setAccount(nextAccount);
+      setMessage(nextAccount.subscription.active ? '구독 계정이 확인되었습니다.' : '로그인되었습니다. 구독을 활성화하면 생성 기능을 사용할 수 있습니다.');
+    });
+
+  const handleLogout = () => {
+    clearSessionToken();
+    setAccount(null);
+    setMessage('로그아웃되었습니다.');
+  };
+
+  const handleCheckout = () =>
+    runStep('checkout', async () => {
+      const checkout = await createCheckout();
+      window.location.href = checkout.url;
+    });
+
   const handleOutline = () =>
     runStep('outline', async () => {
-      const nextOutline = await generateOutline(apiKey, researchContent, keywords);
+      const nextOutline = await generateOutline(researchContent, keywords);
       setOutline(nextOutline);
       setDrafts([]);
       setEnhancements([]);
@@ -77,7 +106,7 @@ export function PaperWriter() {
       const nextDrafts: SectionDraft[] = [];
       for (const section of outline.sections) {
         setMessage(`${section.title} 섹션 작성 중...`);
-        nextDrafts.push(await draftSection(apiKey, outline, section, researchContent));
+        nextDrafts.push(await draftSection(outline, section, researchContent));
         setDrafts([...nextDrafts]);
       }
       setEnhancements([]);
@@ -90,7 +119,7 @@ export function PaperWriter() {
       const nextEnhancements: CitationEnhancement[] = [];
       for (const draft of drafts) {
         setMessage(`${draft.title} PubMed 근거 검색 및 재작성 중...`);
-        nextEnhancements.push(await enhanceSectionWithPubMed(apiKey, draft, keywords));
+        nextEnhancements.push(await enhanceSectionWithPubMed(draft, keywords));
         setEnhancements([...nextEnhancements]);
       }
       setReview(null);
@@ -100,7 +129,7 @@ export function PaperWriter() {
   const handleReview = () =>
     finalManuscript &&
     runStep('review', async () => {
-      setReview(await reviewManuscript(apiKey, finalManuscript));
+      setReview(await reviewManuscript(finalManuscript));
     });
 
   const copyFinal = async () => {
@@ -122,28 +151,51 @@ export function PaperWriter() {
     <main>
       <header className="appHeader">
         <div>
-          <p className="eyebrow">MSCSL Research Paper Writer</p>
-          <h1>연구결과를 PubMed 근거 기반 논문 초안으로 변환</h1>
+          <p className="eyebrow">MSCSL Research Paper Writer v2</p>
+          <h1>월 구독으로 사용하는 PubMed 근거 기반 논문작성기</h1>
         </div>
         <div className="statusPill">
           <ShieldCheck size={18} />
-          실제 PMID 검증
+          서버 보관 API 키
         </div>
       </header>
 
       <section className="workspace">
         <aside className="leftPanel">
-          <PanelTitle icon={<KeyRound size={18} />} title="API Key" />
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => saveApiKey(event.target.value)}
-            placeholder="sk-..."
-            aria-label="OpenAI API Key"
-          />
-          <a className="inlineLink" href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">
-            OpenAI API Keys <ExternalLink size={14} />
-          </a>
+          <PanelTitle icon={<UserRound size={18} />} title="구독 계정" />
+          {account ? (
+            <div className="accountBox">
+              <strong>{account.user.email}</strong>
+              <span className={subscribed ? 'goodText' : 'warningText'}>
+                {subscribed ? `활성 구독 · ${account.subscription.plan}` : '구독 필요'}
+              </span>
+              <button type="button" className="secondaryButton" onClick={handleLogout}>
+                <LogOut size={16} />
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            <div className="accountBox">
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="user@example.com"
+                aria-label="이메일"
+              />
+              <button type="button" className="primaryButton" onClick={handleLogin} disabled={status.login === 'running'}>
+                {status.login === 'running' ? <Loader2 size={16} className="spin" /> : <UserRound size={16} />}
+                로그인
+              </button>
+            </div>
+          )}
+
+          {account && !subscribed && (
+            <button type="button" className="primaryButton fullButton" onClick={handleCheckout} disabled={status.checkout === 'running'}>
+              {status.checkout === 'running' ? <Loader2 size={16} className="spin" /> : <CreditCard size={16} />}
+              월 구독 결제
+            </button>
+          )}
 
           <PanelTitle icon={<FileText size={18} />} title="연구 내용" />
           <textarea
@@ -160,7 +212,7 @@ export function PaperWriter() {
           />
 
           {message && <div className="message">{message}</div>}
-          {!validKey && apiKey && <div className="warning">OpenAI API 키는 sk-로 시작해야 합니다.</div>}
+          {!subscribed && account && <div className="warning">구독이 활성화되어야 논문 생성 버튼을 사용할 수 있습니다.</div>}
         </aside>
 
         <section className="mainPanel">

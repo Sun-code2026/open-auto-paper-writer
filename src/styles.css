@@ -21,6 +21,10 @@ textarea {
   font: inherit;
 }
 
+button {
+  border: 0;
+}
+
 main {
   min-height: 100vh;
 }
@@ -143,6 +147,58 @@ textarea {
 .warning {
   background: #fff1d8;
   color: #754b00;
+}
+
+.accountBox {
+  display: grid;
+  gap: 10px;
+}
+
+.goodText,
+.warningText {
+  font-weight: 800;
+}
+
+.goodText {
+  color: #247568;
+}
+
+.warningText {
+  color: #8a5500;
+}
+
+.primaryButton,
+.secondaryButton {
+  align-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 13px;
+}
+
+.primaryButton {
+  background: #10212b;
+  color: #ffffff;
+}
+
+.secondaryButton {
+  background: #e8ece8;
+  color: #10212b;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.fullButton {
+  margin-top: 12px;
+  width: 100%;
 }
 
 .stepGrid {

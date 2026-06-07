@@ -7,10 +7,8 @@ import type {
   SectionDraft,
   UsedReference,
 } from '../types';
+import { aiRespond } from './apiClient';
 import { searchPubMedBundle } from './pubmedService';
-
-const MODEL = 'chat-latest';
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 
 const parseJson = <T>(text: string): T => {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
@@ -18,41 +16,12 @@ const parseJson = <T>(text: string): T => {
   return JSON.parse(candidate) as T;
 };
 
-async function askOpenAI(apiKey: string, system: string, prompt: string) {
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      instructions: system,
-      input: prompt,
-      max_output_tokens: 4096,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI API request failed: ${response.status} ${errorText}`);
-  }
-
-  const data = await response.json();
-  if (typeof data.output_text === 'string') return data.output_text.trim();
-
-  const text = data.output
-    ?.flatMap((item: { content?: Array<{ type: string; text?: string }> }) => item.content ?? [])
-    .filter((content: { type: string; text?: string }) => content.type === 'output_text' && content.text)
-    .map((content: { text?: string }) => content.text)
-    .join('\n');
-
-  return String(text ?? '').trim();
+async function askModel(system: string, prompt: string) {
+  return aiRespond(system, prompt);
 }
 
-export async function generateOutline(apiKey: string, researchContent: string, keywords: string): Promise<PaperOutline> {
-  const text = await askOpenAI(
-    apiKey,
+export async function generateOutline(researchContent: string, keywords: string): Promise<PaperOutline> {
+  const text = await askModel(
     'You are a meticulous biomedical manuscript planning assistant. Return strict JSON only.',
     `Create a journal manuscript outline from the research input.
 
@@ -79,13 +48,11 @@ Use standard journal sections and include Methods/Results/Discussion when approp
 }
 
 export async function draftSection(
-  apiKey: string,
   outline: PaperOutline,
   section: PaperOutline['sections'][number],
   researchContent: string,
 ): Promise<SectionDraft> {
-  const content = await askOpenAI(
-    apiKey,
+  const content = await askModel(
     'You are a scientific manuscript writer. Be precise, cautious, and mark evidence gaps with [Ref].',
     `Write the "${section.title}" section for this manuscript.
 
@@ -106,9 +73,8 @@ Use journal style. Put [Ref] exactly where external evidence is required. Do not
   };
 }
 
-async function identifyCitationNeeds(apiKey: string, draft: SectionDraft, keywords: string): Promise<CitationNeed[]> {
-  const text = await askOpenAI(
-    apiKey,
+async function identifyCitationNeeds(draft: SectionDraft, keywords: string): Promise<CitationNeed[]> {
+  const text = await askModel(
     'You identify citation needs and PubMed search queries. Return strict JSON only.',
     `Find claims in this section that need PubMed support.
 
@@ -136,7 +102,6 @@ Create no more than 5 citation needs. Queries must be concise and PubMed-friendl
 }
 
 async function rewriteWithEvidence(
-  apiKey: string,
   draft: SectionDraft,
   citationNeeds: CitationNeed[],
   articles: PubMedArticle[],
@@ -156,8 +121,7 @@ Abstract: ${article.abstractText || 'No abstract available'}`,
     )
     .join('\n\n');
 
-  const text = await askOpenAI(
-    apiKey,
+  const text = await askModel(
     'You rewrite manuscript sections using only the provided PubMed evidence. Return strict JSON only.',
     `Rewrite this manuscript section by replacing [Ref] placeholders with evidence-backed citations in [PMID:xxxx] format.
 
@@ -193,14 +157,13 @@ Rules:
 }
 
 export async function enhanceSectionWithPubMed(
-  apiKey: string,
   draft: SectionDraft,
   keywords: string,
 ): Promise<CitationEnhancement> {
-  const citationNeeds = await identifyCitationNeeds(apiKey, draft, keywords);
+  const citationNeeds = await identifyCitationNeeds(draft, keywords);
   const bundles = await Promise.all(citationNeeds.map((need) => searchPubMedBundle(need.query, 5)));
   const foundArticles = Array.from(new Map(bundles.flat().map((article) => [article.pmid, article])).values());
-  const rewritten = await rewriteWithEvidence(apiKey, draft, citationNeeds, foundArticles);
+  const rewritten = await rewriteWithEvidence(draft, citationNeeds, foundArticles);
 
   return {
     sectionId: draft.sectionId,
@@ -241,9 +204,8 @@ ${referenceText}
 `;
 }
 
-export async function reviewManuscript(apiKey: string, manuscript: string): Promise<ReviewResult> {
-  const text = await askOpenAI(
-    apiKey,
+export async function reviewManuscript(manuscript: string): Promise<ReviewResult> {
+  const text = await askModel(
     'You are Reviewer #2 for a scientific journal. Be rigorous but constructive. Return strict JSON only.',
     `Review this manuscript draft.
 
